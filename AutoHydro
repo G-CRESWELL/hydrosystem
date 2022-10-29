@@ -1,0 +1,148 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+float calibration_value = 21.44;
+int phval = 0; 
+unsigned long int avgval; 
+int buffer_arr[10];
+int temp;
+float ph_act;
+float Vin = 4.3;
+int ph_dose_time = 5; //Time paristaltic pumps run in seconds
+
+namespace pin {
+const byte ph_sensor = A0;
+const byte tds_sensor = A1;
+const byte one_wire_bus = 7; // Dallas Temperature Sensor
+const byte ph_down = 8;
+const byte ph_up = 9;
+const byte ec_dose = 10;
+const byte solenoid = 11;
+}
+
+namespace sensor {
+float ec = 0;
+float ppm = 0;
+float waterTemp = 0;
+float ecCalibration = 0.75;
+}
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+OneWire oneWire(pin::one_wire_bus);
+DallasTemperature dallasTemperature(&oneWire);
+
+// EC isolator
+int EC_Isolator = 2;
+int EC_GND_Wire = 3;
+
+void setup() {
+  Wire.begin();
+  lcd.init();
+  lcd.backlight();
+  Serial.begin(9600);
+  dallasTemperature.begin();
+  pinMode(EC_Isolator, OUTPUT);
+  pinMode(EC_GND_Wire, OUTPUT);
+  pinMode(pin::ph_down, OUTPUT);
+  digitalWrite(EC_Isolator, HIGH);
+  digitalWrite(EC_GND_Wire, LOW); 
+  digitalWrite(pin::ph_down, LOW);
+}
+
+void temp_print(){
+  dallasTemperature.requestTemperatures();
+  sensor::waterTemp = dallasTemperature.getTempCByIndex(0);
+  Serial.print("Temp: ");
+  Serial.println(sensor::waterTemp);
+}
+
+void get_EC(){
+  digitalWrite(EC_Isolator, LOW); 
+  digitalWrite(EC_GND_Wire, HIGH);
+  delay(5000);
+  dallasTemperature.requestTemperatures();
+  sensor::waterTemp = dallasTemperature.getTempCByIndex(0);
+  float rawEc = analogRead(pin::tds_sensor) * Vin/1024.0; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+  float temperatureCoefficient = 1.0 + 0.02 * (sensor::waterTemp - 25.0); // temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+  sensor::ec = (rawEc / temperatureCoefficient) * sensor::ecCalibration; // temperature and calibration compensation
+  sensor::ppm = (sensor::ec*500);
+  Serial.print(F("EC: ")); 
+  Serial.println(sensor::ec, 2);
+  Serial.print("PPM: ");
+  Serial.println(sensor::ppm, 2);
+  digitalWrite(EC_Isolator, HIGH);
+  digitalWrite(EC_GND_Wire, LOW);
+}
+
+void ph_sensor() {
+  for(int i=0;i<10;i++) { 
+    buffer_arr[i]=analogRead(pin::ph_sensor);
+    delay(30);
+  }
+  for(int i=0;i<9;i++) {
+    for(int j=i+1;j<10;j++) {
+      if(buffer_arr[i]>buffer_arr[j]) {
+        temp=buffer_arr[i];
+        buffer_arr[i]=buffer_arr[j];
+        buffer_arr[j]=temp;
+      }
+    }
+  }
+  avgval=0;
+  for(int i=2;i<8;i++)
+    avgval+=buffer_arr[i];
+  float volt=(float)avgval*5/1024/6;
+  ph_act = -5.70 * volt + calibration_value;
+  Serial.print("pH Val: ");
+  Serial.println(ph_act);
+}
+
+void dose_ph(){
+  if(ph_act > 6.5 || ph_act <  5.5){
+    while(ph_act > 6.5){
+      digitalWrite(pin::ph_down, HIGH);
+      Serial.println("PH Down ON");
+      Serial.println(ph_dose_time*1000);
+      delay(ph_dose_time*1000);
+      digitalWrite(pin::ph_down, LOW);
+      Serial.println("PH Down Off");
+      delay(10000); //Delay 5 min for adequate mixing prior to
+      ph_sensor(); 
+    }
+    while(ph_act < 5.5){
+      digitalWrite(pin::ph_up, HIGH);
+      Serial.println("PH UP ON");
+      Serial.println(ph_dose_time*1000);
+      delay(ph_dose_time*1000);
+      digitalWrite(pin::ph_up, LOW);
+      Serial.println("PH UP LOW");
+      delay(10000);
+      ph_sensor();
+    }
+  }
+}
+
+void loop() {
+  delay(3000);
+  ph_sensor();
+  temp_print();
+  lcd.setCursor(0,0);
+  lcd.print("PH:");
+  lcd.print(ph_act);
+  lcd.setCursor(0, 1);
+  lcd.print("Temp:");
+  lcd.print(sensor::waterTemp);
+  dose_ph();
+  delay(5000);
+  get_EC();
+  lcd.setCursor(0,0);
+  lcd.print("EC:");
+  lcd.print(sensor::ec);
+  lcd.setCursor(0,1);
+  lcd.print("PPM:");
+  lcd.print(sensor::ppm);
+  delay(2000);
+}
