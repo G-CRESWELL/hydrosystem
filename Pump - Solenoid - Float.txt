@@ -1,0 +1,63 @@
+#define floatSwitch 2
+#define solenoid 3
+#define pump 4
+
+int pumpstate = 0;
+int floatstate = 0;
+unsigned long seconds = 0UL; //used to increment time used that is subtracted from off time
+int offtime = 30; //set off time in minutes
+int ontime = 23; //set on time in minutes
+int draintime = 7; //set time for water drain in minutes
+unsigned long secondsLeft = 0UL;
+unsigned long debugtime = 0UL;
+
+void setup (){
+  Serial.begin(9600);
+  pinMode(pump, OUTPUT);
+  pinMode(solenoid, OUTPUT);
+  pinMode(floatSwitch, INPUT);
+}
+
+void loop (){
+  pumpOn();
+  floatstate = digitalRead(floatSwitch);
+  seconds = 0;
+  while (floatstate == LOW){
+    digitalWrite(solenoid, HIGH);
+    Serial.print("Water Pumping ");
+    delay(1000);
+    seconds++;
+    Serial.println(seconds);
+    floatstate = digitalRead(floatSwitch);
+    if (seconds == (offtime*60)){
+      floatstate = HIGH;
+      digitalWrite(solenoid, LOW);
+    }
+  } 
+  if (floatstate == HIGH) {
+    digitalWrite(solenoid, LOW);
+    Serial.print("Water Not Pumping ");
+    Serial.println(seconds);
+    Serial.println("Time Waiting.... ");
+    // debugtime = ((offtime*60)-seconds)*1000;
+    secondsLeft = ((offtime*60)-seconds);
+    debugtime = (secondsLeft*1000);
+    Serial.println(offtime);
+    Serial.println(offtime*60);
+    Serial.println((offtime*60)-seconds);
+    Serial.println(secondsLeft);
+    Serial.println(debugtime);
+    delay(debugtime); //needs to delay 45 minutes
+  }
+}
+
+//turns pump on for ontime and then delays 7 minutes for drain
+void pumpOn(){
+  digitalWrite(pump, LOW);
+  Serial.println("Pump On");
+  Serial.println(ontime);
+  Serial.println(ontime*60000);
+  delay(ontime*60000); //needs to delay 23 minutes
+  digitalWrite(pump, HIGH);
+  delay(draintime*60000); //needs to delay for 7 minutes for drain
+}
